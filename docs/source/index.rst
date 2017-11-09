@@ -52,17 +52,15 @@ webservice, using method decorators and function annotations:
         def update_user(self, access_token, **info: Body):
             """Update an authenticated user."""
 
-Let's build an instance of this GitHub API consumer for the main site!
-(Notice that I can use this same consumer class to also access any
-GitHub Enterprise instance by simply changing the :py:attr:`base_url`.):
+Let's instantiate this consumer to access the main GitHub API:
 
 .. code-block:: python
 
     github = GitHub(base_url="https://api.github.com/")
 
-To access the GitHub API with this instance, we can invoke any of the
-methods that we defined in our class definition above. To illustrate,
-let's update my GitHub profile bio with :py:meth:`update_user`:
+To access the API with this instance, we can invoke any of the methods
+that we defined in our class definition above. To illustrate, let's
+update my GitHub profile bio with :py:meth:`update_user`:
 
 .. code-block:: python
 
