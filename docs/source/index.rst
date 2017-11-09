@@ -48,8 +48,8 @@ webservice, using method decorators and function annotations:
             """Get a single user."""
 
         @json
-        @patch("/user")
-        def update_user(self, access_token: Query, **info: Body):
+        @patch("/user{?access_token}")
+        def update_user(self, access_token, **info: Body):
             """Update an authenticated user."""
 
 Let's build an instance of this GitHub API consumer for the main site!
