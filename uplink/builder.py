@@ -1,104 +1,118 @@
 # Standard library imports
-import collections
+import functools
 import warnings
 
 # Local imports
 from uplink import (
-    hooks, clients, converter, interfaces, exceptions, helpers, utils
+    arguments,
+    auth as auth_,
+    clients,
+    converters as converters_,
+    exceptions,
+    helpers,
+    hooks as hooks_,
+    interfaces,
+    session,
+    utils,
 )
+from uplink.clients import io
 
 __all__ = ["build", "Consumer"]
 
 
-class ResponseConverter(hooks.TransactionHookDecorator):
-    # TODO: Override `audit_request` to log request details
-
-    def __init__(self, connection, convert):
-        super(ResponseConverter, self).__init__(connection)
-        self._convert = convert
-
-    def handle_response(self, response):
-        response = super(ResponseConverter, self).handle_response(response)
-        return self._convert(response)
-
-
-class RequestHandler(object):
-
-    def __init__(self, hook, method, url, extras):
-        self._args = (method, url, extras)
-        self._hook = hook
-
-    def fulfill(self, request):
-        self._hook.audit_request(*self._args)
-        request.add_callback(self._hook.handle_response)
-        return request.send(*self._args)
-
-
 class RequestPreparer(object):
+    def __init__(self, builder, consumer=None):
+        self._client = builder.client
+        self._base_url = str(builder.base_url)
+        self._converters = list(builder.converters)
+        self._auth = builder.auth
+        self._consumer = consumer
 
-    def __init__(self, uplink_builder, definition):
-        self._hook = uplink_builder.hook
-        self._client = uplink_builder.client
-        if issubclass(self._client, clients.interfaces.HttpClientAdapter):
-            self._client = self._client()
-        self._base_url = str(uplink_builder.base_url)
-        self._converter_registry = self._make_converter_registry(
-            uplink_builder, definition
-        )
+        if builder.hooks:
+            self._session_chain = hooks_.TransactionHookChain(*builder.hooks)
+        else:
+            self._session_chain = None
 
     @staticmethod
-    def _make_converter_registry(uplink_builder, request_definition):
-        return converter.ConverterFactoryRegistry(
-            uplink_builder.converter_factories,
-            argument_annotations=request_definition.argument_annotations,
-            request_annotations=request_definition.method_annotations
-        )
+    def _get_request_hooks(contract):
+        chain = list(contract.transaction_hooks)
+        if callable(contract.return_type):
+            chain.append(hooks_.ResponseHandler(contract.return_type))
+        return chain
 
-    def _join_uri_with_base(self, url):
-        return utils.urlparse.urljoin(self._base_url, url)
+    def _wrap_hook(self, func):
+        return functools.partial(func, self._consumer)
 
-    def _get_converter(self, request):
-        factory = self._converter_registry[converter.CONVERT_FROM_RESPONSE_BODY]
-        return factory(request.return_type).convert
+    def apply_hooks(self, execution_builder, chain):
+        # TODO:
+        #   Instead of creating a TransactionChain, we could simply
+        #   add each response and error handler in the chain to the
+        #   execution builder. This would allow heterogenous response
+        #   and error handlers. Right now, the TransactionChain
+        #   enforces that all response/error handlers are blocking if
+        #   any response/error handler is blocking, which is
+        #   unnecessary now that we delegate execution to an IO layer.
+        if chain.handle_response is not None:
+            execution_builder.with_callbacks(
+                self._wrap_hook(chain.handle_response)
+            )
+        execution_builder.with_errbacks(self._wrap_hook(chain.handle_exception))
 
-    def prepare_request(self, request):
-        url = self._join_uri_with_base(request.uri)
-        convert = self._get_converter(request)
-        hook = ResponseConverter(self._hook, convert)
-        request_handler = RequestHandler(
-            hook, request.method, url, request.info)
-        return request_handler.fulfill(self._client.create_request())
+    def prepare_request(self, request_builder, execution_builder):
+        self._auth(request_builder)
+        request_hooks = self._get_request_hooks(request_builder)
+        if request_hooks:
+            chain = hooks_.TransactionHookChain(*request_hooks)
+            chain.audit_request(self._consumer, request_builder)
+            self.apply_hooks(execution_builder, chain)
+        if self._session_chain:
+            self.apply_hooks(execution_builder, self._session_chain)
 
-    def create_request_builder(self):
-        return helpers.RequestBuilder(self._converter_registry)
+        execution_builder.with_client(self._client)
+        execution_builder.with_io(self._client.io())
+        execution_builder.with_template(request_builder.request_template)
+
+    def create_request_builder(self, definition):
+        registry = definition.make_converter_registry(self._converters)
+        req = helpers.RequestBuilder(self._client, registry, self._base_url)
+        if self._session_chain:
+            self._session_chain.audit_request(self._consumer, req)
+        return req
 
 
 class CallFactory(object):
-    def __init__(self, instance, request_preparer, request_definition):
-        self._instance = instance
+    def __init__(
+        self, request_preparer, request_definition, execution_builder_factory
+    ):
         self._request_preparer = request_preparer
         self._request_definition = request_definition
+        self._execution_builder_factory = execution_builder_factory
 
     def __call__(self, *args, **kwargs):
-        args = (self._instance,) + args
-        builder = self._request_preparer.create_request_builder()
-        self._request_definition.define_request(builder, args, kwargs)
-        request = builder.build()
-        return self._request_preparer.prepare_request(request)
+        request_builder = self._request_preparer.create_request_builder(
+            self._request_definition
+        )
+        self._request_definition.define_request(request_builder, args, kwargs)
+        execution_builder = self._execution_builder_factory()
+        self._request_preparer.prepare_request(
+            request_builder, execution_builder
+        )
+        execution = execution_builder.build()
+        return execution.start(
+            # TODO: Create request value object
+            (request_builder.method, request_builder.url, request_builder.info)
+        )
 
 
 class Builder(interfaces.CallBuilder):
+    """The default callable builder."""
 
     def __init__(self):
-        """
-        Construct a Call builder
-        """
-
         self._base_url = ""
-        self._hook = hooks.TransactionHook()
-        self._client = clients.DEFAULT_CLIENT
-        self._converter_factories = collections.deque()
-        self._converter_factories.append(converter.StandardConverterFactory())
+        self._hooks = []
+        self._client = clients.get_client()
+        self._converters = converters_.get_default_converter_factories()
+        self._auth = auth_.get_auth()
 
     @property
     def client(self):
@@ -106,15 +120,15 @@ class Builder(interfaces.CallBuilder):
 
     @client.setter
     def client(self, client):
-        self._client = client
+        if client is not None:
+            self._client = clients.get_client(client)
 
     @property
-    def hook(self):
-        return self._hook
+    def hooks(self):
+        return iter(self._hooks)
 
-    @hook.setter
-    def hook(self, hook):
-        self._hook = hook
+    def add_hook(self, *hooks):
+        self._hooks.extend(hooks)
 
     @property
     def base_url(self):
@@ -125,64 +139,229 @@ class Builder(interfaces.CallBuilder):
         self._base_url = base_url
 
     @property
-    def converter_factories(self):
-        return iter(self._converter_factories)
+    def converters(self):
+        return self._converters
 
-    def add_converter_factory(self, *converter_factories):
-        self._converter_factories.extendleft(converter_factories)
+    @converters.setter
+    def converters(self, converters):
+        if isinstance(converters, converters_.interfaces.Factory):
+            converters = (converters,)
+        self._converters = tuple(converters)
+        self._converters += converters_.get_default_converter_factories()
 
-    def build(self, consumer, definition):
+    @property
+    def auth(self):
+        return self._auth
+
+    @auth.setter
+    def auth(self, auth):
+        if auth is not None:
+            self._auth = auth_.get_auth(auth)
+
+    def build(self, definition, consumer=None):
         """
-        Returns a callable to replace the definition on the given
-        consumer instance.
+        Creates a callable that uses the provided definition to execute
+        HTTP requests when invoked.
         """
-
-        try:
-            definition = definition.build()
-        except exceptions.InvalidRequestDefinition as error:
-            # TODO: Find a Python 2.7 compatible way to reraise
-            raise exceptions.UplinkBuilderError(
-                consumer.__class__, definition.__name__, error)
-
         return CallFactory(
-            consumer,
-            RequestPreparer(self, definition),
-            definition
+            RequestPreparer(self, consumer),
+            definition,
+            io.RequestExecutionBuilder,
         )
 
 
-class Consumer(object):
+class ConsumerMethod(object):
+    """
+    A wrapper around a :py:class`interfaces.RequestDefinitionBuilder`
+    instance bound to a :py:class:`Consumer` subclass, mainly responsible
+    for controlling access to the instance.
+    """
+
+    def __init__(self, owner_name, attr_name, request_definition_builder):
+        self._request_definition_builder = request_definition_builder
+        self._owner_name = owner_name
+        self._attr_name = attr_name
+        self._request_definition = self._build_definition()
+
+    def _build_definition(self):
+        try:
+            return self._request_definition_builder.build()
+        except exceptions.InvalidRequestDefinition as error:
+            # TODO: Find a Python 2.7 compatible way to reraise
+            raise exceptions.UplinkBuilderError(
+                self._owner_name, self._attr_name, error
+            )
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self._request_definition_builder.copy()
+        else:
+            return instance.session.create(instance, self._request_definition)
+
+
+class ConsumerMeta(type):
+    @staticmethod
+    def _wrap_if_definition(cls_name, key, value):
+        if isinstance(value, interfaces.RequestDefinitionBuilder):
+            value = ConsumerMethod(cls_name, key, value)
+        return value
+
+    @staticmethod
+    def _set_init_handler(namespace):
+        try:
+            init = namespace["__init__"]
+        except KeyError:
+            pass
+        else:
+            builder = arguments.ArgumentAnnotationHandlerBuilder.from_func(init)
+            handler = builder.build()
+
+            @functools.wraps(init)
+            def new_init(self, *args, **kwargs):
+                init(self, *args, **kwargs)
+                call_args = utils.get_call_args(init, self, *args, **kwargs)
+                f = functools.partial(
+                    handler.handle_call_args, call_args=call_args
+                )
+                hook = hooks_.RequestAuditor(f)
+                self.session.inject(hook)
+
+            namespace["__init__"] = new_init
+
+    def __new__(mcs, name, bases, namespace):
+        mcs._set_init_handler(namespace)
+
+        # Wrap all definition builders with a special descriptor that
+        # handles attribute access behavior.
+        for key, value in namespace.items():
+            namespace[key] = mcs._wrap_if_definition(name, key, value)
+        return super(ConsumerMeta, mcs).__new__(mcs, name, bases, namespace)
+
+    def __setattr__(cls, key, value):
+        value = cls._wrap_if_definition(cls.__name__, key, value)
+        super(ConsumerMeta, cls).__setattr__(key, value)
+
+
+_Consumer = ConsumerMeta("_Consumer", (), {})
+
+
+class Consumer(interfaces.Consumer, _Consumer):
+    """
+    Base consumer class with which to define custom consumers.
+
+    Example usage:
+
+    .. code-block:: python
+
+        from uplink import Consumer, get
+
+        class GitHub(Consumer):
+
+            @get("/users/{user}")
+            def get_user(self, user):
+                pass
+
+        client = GitHub("https://api.github.com/")
+        client.get_user("prkumar").json()  # {'login': 'prkumar', ... }
+
+    Args:
+        base_url (:obj:`str`, optional): The base URL for any request
+            sent from this consumer instance.
+        client (optional): A supported HTTP client instance (e.g.,
+            a :class:`requests.Session`) or an adapter (e.g.,
+            :class:`~uplink.RequestsClient`).
+        converters (:class:`ConverterFactory`, optional):
+            One or more objects that encapsulate custom
+            (de)serialization strategies for request properties and/or
+            the response body. (E.g.,
+            :class:`~uplink.converters.MarshmallowConverter`)
+        auth (:obj:`tuple` or :obj:`callable`, optional): The
+            authentication object for this consumer instance.
+        hooks (:class:`~uplink.hooks.TransactionHook`, optional):
+            One or more hooks to modify behavior of request execution
+            and response handling (see :class:`~uplink.response_handler`
+            or :class:`~uplink.error_handler`).
+    """
 
     def __init__(
-            self,
-            base_url="",
-            client=None,
-            hook=None,
-            converter_factories=()
+        self,
+        base_url="",
+        client=None,
+        converters=(),
+        auth=None,
+        hooks=(),
+        **kwargs
     ):
         builder = Builder()
         builder.base_url = base_url
-        builder.add_converter_factory(*converter_factories)
-        if client is not None:
-            builder.client = client
-        if hook is not None:
-            builder.hook = hook
-        self._build(builder)
+        builder.converters = kwargs.pop("converter", converters)
+        hooks = kwargs.pop("hook", hooks)
+        if isinstance(hooks, hooks_.TransactionHook):
+            hooks = (hooks,)
+        builder.add_hook(*hooks)
+        builder.auth = auth
+        builder.client = client
+        self.__session = session.Session(builder)
+        self.__client = builder.client
 
-    def _build(self, call_builder):
-        definition_builders = helpers.get_api_definitions(self)
-        for attribute_name, definition_builder in definition_builders:
-            caller = call_builder.build(self, definition_builder)
-            setattr(self, attribute_name, caller)
+    def _inject(self, hook, *more_hooks):
+        self.session.inject(hook, *more_hooks)
+
+    @property
+    def session(self):
+        """
+        The :class:`~uplink.session.Session` object for this consumer
+        instance.
+
+        Exposes the configuration of this :class:`~uplink.Consumer`
+        instance and allows the persistence of certain properties across
+        all requests sent from that instance.
+
+        Example usage:
+
+        .. code-block:: python
+
+            import uplink
+
+            class MyConsumer(uplink.Consumer):
+                def __init__(self, language):
+                    # Set this header for all requests of the instance.
+                    self.session.headers["Accept-Language"] = language
+                    ...
+
+        Returns:
+            :class:`~uplink.session.Session`
+        """
+        return self.__session
+
+    @property
+    def exceptions(self):
+        """
+        An enum of standard HTTP client exceptions that can be handled.
+
+        This property enables the handling of specific exceptions from
+        the backing HTTP client.
+
+        Example:
+
+            .. code-block:: python
+
+                try:
+                    github.get_user(user_id)
+                except github.exceptions.ServerTimeout:
+                    # Handle the timeout of the request
+                    ...
+        """
+        return self.__client.exceptions
 
 
 def build(service_cls, *args, **kwargs):
+    name = service_cls.__name__
     warnings.warn(
         "`uplink.build` is deprecated and will be removed in v1.0.0. "
         "To construct a consumer instance, have `{0}` inherit "
-        "`uplink.Consumer` then instantiate (e.g., `{0}(...)`). ".format(
-            service_cls.__name__),
-        DeprecationWarning
+        "`uplink.Consumer` then instantiate (e.g., `{0}(...)`). ".format(name),
+        DeprecationWarning,
     )
-    consumer_cls = type(service_cls.__name__, (service_cls, Consumer), {})
-    return consumer_cls(*args, **kwargs)
+    consumer = type(name, (service_cls, Consumer), dict(service_cls.__dict__))
+    return consumer(*args, **kwargs)

@@ -26,6 +26,34 @@ As we're in initial development, the project is accepting feature requests!
 To request a feature, open a GitHub issue, summarize the enhancement, and
 add the **feature request** label.
 
+Installation
+============
+
+Install all development dependencies using:
+
+::
+
+    $ pipenv install --dev
+    $ pipenv run pre-commit install
+
+
+If you are unfamiliar with pipenv_ but are comfortable with virtualenvs_,
+you can alternatively run ``pip install pipenv`` inside the virtualenv you are
+already using then invoke the commands from above. This will setup your
+virtualenv correctly.
+
+.. _pipenv: https://docs.pipenv.org/
+.. _virtualenvs: https://virtualenv.pypa.io/en/stable/
+
+Before submitting a pull request, run all tests with tox_:
+
+::
+
+    $ tox
+
+.. _tox: https://tox.readthedocs.io/en/latest/
+
+
 Making Changes to the Source
 ============================
 To find a feature or bug to work on, checkout the open GitHub issues with the
@@ -87,7 +115,8 @@ feature branch, which contains work for the next or some distant
 release. To start a feature branch, branch off of ``master``. Preferably,
 prefix the branch name with ``feature/`` (or ``feature/v{version}/``, where
 {version} is the feature's target release version -- e.g., ``feature/v1.0
-.0/*``) for clarity. Make your changes on this branch.
+.0/*``) for clarity. Make your changes on this branch, then when ready
+to merge, open a `pull request`_ against ``master``.
 
 Importantly, if your changes are not targeted for the next immediate
 release, keep them on the feature branch until ``master`` is bumped to
@@ -145,26 +174,86 @@ require merging your work into one or two target branches (typically one is
 3. If your PR fails the Travis CI check, investigate the build log for
    cause of failure, address locally, and update the candidate branch. Repeat
    this step until the PR passes the Travis CI check.
-4. If your PR fails the Coveralls check, check the PR's Coveralls' report
+4. If your PR fails the Codecov check, check the PR's Codecov report
    to identify modules experiencing a test coverage drop. Improve testing
    locally, then update the candidate branch.
 5. Once all checks have passed and the assigned reviewers have approved,
    a maintainer will merge your pull requests into the base branch by
    selecting "Merge Pull Request" (i.e., a ``--no-ff`` merge).
-6. If the base branch fails the Travis CI or Coveralls builds that run
-   immediately following your merge, revert the merge commit, address the
-   issue locally, update the candidate branch, then revisit step 3.
+6. If the Travis CI build for the merge commit fails, you should revert the
+   merge commit,  address the issue locally, update the candidate branch,
+   then revisit step 3.
 
 Tests
 =====
-We use the unit testing framework ``pytest``. Kept under the `tests`
-directory, unit tests are written in Python modules with the filename
-pattern ``test_*.py``.
+We use the unit testing framework ``pytest``. Unit and integrations
+tests are kept under the `tests` directory, written in Python modules
+that match the filename pattern ``test_*.py``.
 
-Notably, ``conftest.py`` defines several `pytest fixtures
-<https://docs.pytest.org/en/latest/fixture.html>`_, for injecting an
+Notably, the ``conftest.py`` files define several `pytest fixtures
+<https://docs.pytest.org/en/latest/fixture.html>`_, for injecting a mock
 instance of an interface (defined in ``uplink.interfaces``) or utility
-(defined in ``uplink.helpers``) class into your tests.
+class (defined in ``uplink.helpers``) into your tests.
+
+Writing an Integration Test
+---------------------------
+As a rule of thumb, an integration test should not exercise an actual
+API -- i.e., a mocked HTTP client should be used instead. This guideline
+facilitates efficient CI builds, produces side-effect free tests, and
+makes everyone happy 🤗.
+
+To that end, the following pytest fixtures are available when writing
+integration tests:
+
+- ``mock_client``:
+   A fake HTTP client adapter that can be passed into the ``client``
+   constructor parameter of any ``Consumer`` subclass:
+
+   ::
+
+    api = MyConsumer(base_url=..., client=mock_client)
+
+   Further, this fixture keeps a ``history`` of "requests", which is helpful
+   when we want to assert what the server should have received:
+
+   ::
+
+    api = MyConsumer(base_url=..., client=mock_client)
+
+    # Makes a "mocked" HTTP request
+    api.get_user("prkumar")
+
+    # Retrieve details of the above request
+    request = mock_client.history[-1]
+
+    assert "GET" == request.method, "The HTTP Method should be GET"
+
+   Check out the definition of ``RequestInvocation`` in
+   ``tests/integration/__init__.py`` for the full set of exposed request
+   attributes available for assertion.
+
+   At minimum, most integrations tests require the ``mock_client`` fixture.
+
+- ``mock_response``:
+   An HTTP response builder that can creates a fake response to be returned
+   by ``mock_client``:
+
+   ::
+
+    # Mock user response
+    mock_response.with_json({"id": 123, "username": "prkumar"})
+    mock_client.with_response(mock_response)
+
+    api = MyConsumer(base_url=..., client=mock_client)
+
+    # Verify user is returned
+    response = api.get_user("prkumar")
+    assert {"id": 123, "username": "prkumar"} == response.json()
+
+For a more concrete example of how to use these fixtures (and how to write
+integration tests in general), check out any one of the existing integration
+tests under the ``tests/integration`` package.
+
 
 Style Guide
 ===========
@@ -176,4 +265,4 @@ style. Checkout `this page
 <http://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html>`_
 for examples of Google Python Style Guide docstrings.
 
-.. _`Google Python Style Guide`: https://google.github.io/styleguide/pyguide
+.. _`Google Python Style Guide`: https://github.com/google/styleguide/blob/gh-pages/pyguide.md

@@ -10,117 +10,152 @@ A Declarative HTTP Client for Python. Inspired by `Retrofit
 
 |Release| |Python Version| |License| |Coverage Status| |Gitter|
 
-.. note::
-
-   Uplink is currently in initial development and, therefore, not
-   production ready at the moment. Furthermore, as the package follows a
-   `semantic versioning <https://packaging.python.org/tutorials/distributing-packages/#semantic-versioning-preferred>`__
-   scheme, the public API outlined in this documentation should be
-   considered tentative until the :code:`v1.0.0` release.
-
-   However, while Uplink is under construction, we invite eager users
-   to install early and provide open feedback, which can be as simple as
-   opening a GitHub issue when you notice a missing feature, latent defect,
-   documentation oversight, etc.
-
-   Moreover, for those interested in contributing, checkout the `Contribution
-   Guide on GitHub`_!
-
 .. _`Contribution Guide on GitHub`: https://github.com/prkumar/uplink/blob/master/CONTRIBUTING.rst
 .. _Hacktoberfest: https://hacktoberfest.digitalocean.com/
 
-A Quick Walkthrough, with GitHub API v3:
-========================================
-Turn a Python class into a self-describing consumer of your favorite HTTP
-webservice, using method decorators and function annotations:
+.. note::
+
+   Uplink is in beta development. The public API is still evolving,
+   but we expect most changes to be backwards compatible at this point.
+
+Uplink turns your HTTP API into a Python class.
 
 .. code-block:: python
 
-    from uplink import *
+   from uplink import Consumer, get, Path, Query
 
-    # To define common request metadata, you can decorate the class
-    # rather than each method separately.
-    @headers({"Accept": "application/vnd.github.v3.full+json"})
-    class GitHub(Consumer):
 
-        @get("/users/{username}")
-        def get_user(self, username):
-            """Get a single user."""
+   class GitHub(Consumer):
+       """A Python Client for the GitHub API."""
 
-        @json
-        @patch("/user")
-        def update_user(self, access_token: Query, **info: Body):
-            """Update an authenticated user."""
+       @get("users/{user}/repos")
+       def get_repos(self, user: Path, sort_by: Query("sort")):
+          """Get user's public repositories."""
 
-Let's build an instance of this GitHub API consumer for the main site!
-(Notice that I can use this same consumer class to also access any
-GitHub Enterprise instance by simply changing the :py:attr:`base_url`.):
+Build an instance to interact with the webservice.
 
 .. code-block:: python
 
-    github = GitHub(base_url="https://api.github.com/")
+   github = GitHub(base_url="https://api.github.com/")
 
-To access the GitHub API with this instance, we can invoke any of the
-methods that we defined in our class definition above. To illustrate,
-let's update my GitHub profile bio with :py:meth:`update_user`:
+Then, executing an HTTP request is as simply as invoking a method.
 
 .. code-block:: python
 
-    response = github.update_user(token, bio="Beam me up, Scotty!")
+   repos = github.get_repos(user="octocat", sort_by="created")
 
-*Voila*, the method seamlessly builds the request (using the decorators
-and annotations from the method's definition) and executes it in the same call.
-And, by default, Uplink uses the powerful `Requests
-<http://docs.python-requests.org/en/master/>`_ library. So, the returned
-:py:obj:`response` is simply a :py:class:`requests.Response` (`documentation
-<http://docs.python-requests.org/en/master/api/#requests.Response>`__):
+The returned object is a friendly :py:class:`requests.Response`:
 
 .. code-block:: python
 
-    print(response.json()) # {u'disk_usage': 216141, u'private_gists': 0, ...
+   print(repos.json())
+   # Output: [{'id': 64778136, 'name': 'linguist', ...
 
-In essence, Uplink delivers reusable and self-sufficient objects for
-accessing HTTP webservices, with minimal code and user pain ☺️ .
+For sending non-blocking requests, Uplink comes with support for
+:py:mod:`aiohttp` and :py:mod:`twisted` (`example
+<https://github.com/prkumar/uplink/tree/master/examples/async-requests>`_).
 
-Asynchronous Requests
----------------------
-Uplink includes support for concurrent requests with asyncio (for Python 3.4+)
-and Twisted (for all supported Python versions). Checkout
-:ref:`non-blocking requests` for more.
+Features
+========
 
-The User Manual
-===============
+- **Quickly Define Structured API Clients**
+
+  - Use decorators and type hints to describe each HTTP request
+  - JSON, URL-encoded, and multipart request body and file upload
+  - URL parameter replacement, request headers, and query parameter support
+
+- **Bring Your Own HTTP Library**
+
+  - `Non-blocking I/O support`_ for Aiohttp and Twisted
+  - :ref:`Supply your own session <swap_default_http_client>` (e.g., :class:`requests.Session`) for greater control
+
+- **Easy and Transparent Deserialization/Serialization**
+
+  - Define :ref:`custom converters <custom_json_deserialization>` for your own objects
+  - Support for |marshmallow|_ schemas and :ref:`handling collections <converting_collections>` (e.g., list of Users)
+
+- **Extendable**
+
+  - Install optional plugins for additional features (e.g., `protobuf support`_)
+  - Compose :ref:`custom response and error handling <custom response handler>` functions as middleware
+
+- **Authentication**
+
+  - Built-in support for :ref:`Basic Authentication <basic_authentication>`
+  - Use existing auth libraries for supported clients (e.g., |requests-oauthlib|_)
+
+Uplink officially supports Python 2.7 & 3.3-3.7.
+
+.. |marshmallow| replace:: ``marshmallow``
+.. |requests-oauthlib| replace:: ``requests-oauthlib``
+.. _`Non-blocking I/O support`: https://github.com/prkumar/uplink/tree/master/examples/async-requests
+.. _`marshmallow`: https://github.com/prkumar/uplink/tree/master/examples/marshmallow
+.. _`custom response and error handling`: https://uplink.readthedocs.io/en/latest/user/quickstart.html#response-and-error-handling
+.. _`protobuf support`: https://github.com/prkumar/uplink-protobuf
+.. _`requests-oauthlib`: https://github.com/requests/requests-oauthlib
+
+User Testimonials
+=================
+
+**Michael Kennedy** (`@mkennedy`_), host of `Talk Python`_ and `Python Bytes`_ podcasts-
+
+   Of course our first reaction when consuming HTTP resources in Python is to
+   reach for Requests. But for *structured* APIs, we often want more than ad-hoc
+   calls to Requests. We want a client-side API for our apps. Uplink is
+   the quickest and simplest way to build just that client-side API.
+   Highly recommended.
+
+.. _@mkennedy: https://twitter.com/mkennedy
+.. _`Talk Python`: https://twitter.com/TalkPython
+.. _`Python Bytes`: https://twitter.com/pythonbytes
+
+**Or Carmi** (`@liiight`_), notifiers_ maintainer-
+
+    Uplink’s intelligent usage of decorators and typing leverages the most
+    pythonic features in an elegant and dynamic way. If you need to create an
+    API abstraction layer, there is really no reason to look elsewhere.
+
+.. _@liiight: https://github.com/liiight
+.. _notifiers: https://github.com/notifiers/notifiers
+
+
+User Manual
+===========
 
 Follow this guide to get up and running with Uplink.
 
 .. toctree::
    :maxdepth: 2
 
-   install.rst
-   introduction.rst
-   getting_started.rst
-   advanced.rst
+   user/install.rst
+   user/quickstart.rst
+   user/auth.rst
+   user/serialization.rst
+   user/clients.rst
+   user/tips.rst
 
-..
-   The Public API
-   ==============
+API Reference
+=============
 
-   .. todo::
+This guide details the classes and methods in Uplink's public API.
 
-      Most of this guide is unfinished and completing it is a planned
-      deliverable for the ``v0.3.0`` release. At the least, this work will
-      necessitate adding docstrings to the classes enumerated below.
+.. toctree::
+   :maxdepth: 3
 
-   .. toctree::
-      :maxdepth: 2
+   dev/index
 
-      decorators.rst
-      types.rst
-      changes.rst
+Miscellaneous
+=============
+
+.. toctree::
+   :maxdepth: 2
+
+   changes.rst
 
 
-.. |Coverage Status| image:: https://coveralls.io/repos/github/prkumar/uplink/badge.svg?branch=master
-   :target: https://coveralls.io/github/prkumar/uplink?branch=master
+.. |Coverage Status| image:: https://img.shields.io/codecov/c/github/prkumar/uplink.svg
+   :alt: Codecov
+   :target: https://codecov.io/gh/prkumar/uplink
 .. |Gitter| image:: https://badges.gitter.im/python-uplink/Lobby.svg
    :target: https://gitter.im/python-uplink/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
    :alt: Join the chat at https://gitter.im/python-uplink/Lobby
