@@ -70,7 +70,7 @@ Features
 - **Easy and Transparent Deserialization/Serialization**
 
   - Define `custom converters`_ for your own objects
-  - Support for |marshmallow|_ schemas and `handling collections`_ (e.g., list of Users)
+  - Support for |marshmallow|_ schemas, |pydantic|_ models, and `handling collections`_ (e.g., list of Users)
 
 - **Extendable**
 
@@ -85,6 +85,7 @@ Features
 Uplink officially supports Python 2.7 & 3.3-3.7.
 
 .. |marshmallow| replace:: ``marshmallow``
+.. |pydantic| replace:: ``pydantic``
 .. |requests-oauthlib| replace:: ``requests-oauthlib``
 .. _`Non-blocking I/O support`: https://github.com/prkumar/uplink/tree/master/examples/async-requests
 .. _`Supply your own session`: https://uplink.readthedocs.io/en/latest/user/clients.html#swapping-out-the-default-http-session
@@ -95,6 +96,7 @@ Uplink officially supports Python 2.7 & 3.3-3.7.
 .. _`protobuf support`: https://github.com/prkumar/uplink-protobuf
 .. _`requests-oauthlib`: https://github.com/requests/requests-oauthlib
 .. _`Basic Authentication`: https://uplink.readthedocs.io/en/latest/user/auth.html#basic-authentication
+.. _`pydantic`: https://pydantic-docs.helpmanual.io/
 
 Installation
 ============
@@ -114,7 +116,7 @@ If you are interested in the cutting-edge, preview the upcoming release with:
 Extra! Extra!
 -------------
 
-Further, uplink has optional integrations and features. You can view a full list 
+Further, uplink has optional integrations and features. You can view a full list
 of available extras `here <http://uplink.readthedocs.io/en/latest/install.html#extras>`_.
 
 When installing Uplink with ``pip``, you can select extras using the format:
@@ -188,8 +190,8 @@ Thank you for taking the time to improve an open source project :purple_heart:
 .. |Code Style| image:: https://img.shields.io/badge/code%20style-black-000000.svg
    :target: https://github.com/ambv/black
    :alt: Code style: black
-.. |Coverage Status| image:: https://img.shields.io/codecov/c/github/prkumar/uplink.svg   
-   :alt: Codecov   
+.. |Coverage Status| image:: https://img.shields.io/codecov/c/github/prkumar/uplink.svg
+   :alt: Codecov
    :target: https://codecov.io/gh/prkumar/uplink
 .. |Documentation Status| image:: https://readthedocs.org/projects/uplink/badge/?version=latest
    :target: http://uplink.readthedocs.io/en/latest/?badge=latest

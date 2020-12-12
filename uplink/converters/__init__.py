@@ -1,5 +1,5 @@
 # Standard library imports
-import collections
+from collections import abc
 
 # Local imports
 from uplink._extras import installer, plugin
@@ -15,12 +15,14 @@ from uplink.converters.register import (
 # fmt: off
 from uplink.converters.standard import StandardConverter
 from uplink.converters.marshmallow_ import MarshmallowConverter
+from uplink.converters.pydantic_ import PydanticConverter
 from uplink.converters.typing_ import TypingConverter
 # fmt: on
 
 __all__ = [
     "StandardConverter",
     "MarshmallowConverter",
+    "PydanticConverter",
     "TypingConverter",
     "get_default_converter_factories",
     "register_default_converter_factory",
@@ -55,7 +57,7 @@ class ConverterChain(object):
         return converter
 
 
-class ConverterFactoryRegistry(collections.Mapping):
+class ConverterFactoryRegistry(abc.Mapping):
     """
     A registry that chains together
     :py:class:`interfaces.ConverterFactory` instances.
